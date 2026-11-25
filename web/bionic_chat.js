@@ -387,6 +387,7 @@ const state = {
   attachments: [],
   graphPicks: new Map(),
   cameraMoves: [],
+  imageMeta: new Map(),
   uiPrefs: { camera_selector: true },
   documents: [],
   busy: false,
@@ -1377,7 +1378,9 @@ function renderAttachments() {
       renderAttachments();
     });
     thumb.append(img, remove);
-    box.appendChild(thumb);
+    const card = el("div", "bionic-thumb-card");
+    card.append(thumb, imageMetaEditor(image));
+    box.appendChild(card);
   });
   state.documents.forEach((doc, index) => {
     const chip = el("div", "bionic-doc");
@@ -1649,6 +1652,8 @@ async function sendMessage() {
   let text = state.els.input.value.trim();
   const camera = state.els.cameraText.value.trim();
   if (!text && !camera && !state.attachments.length && !state.documents.length) return;
+  const imageContext = imageContextBlock(state.attachments);
+  if (imageContext) text = text ? `${text}\n\n${imageContext}` : imageContext;
   if (camera) {
     text = `${text || t("cameraOnlyRequest")}\n\nCAMERA MOVE REQUEST: ${camera}`;
     state.els.camera.value = "";
@@ -1989,6 +1994,123 @@ async function runPrompt(rawText) {
   } catch (error) {
     toast("error", t("launchFailed", error?.message || error));
   }
+}
+
+// ---- Image roles (context sent to the LLM) ---------------------------------
+const IMAGE_ROLES = [
+  { value: "", fr: "— rôle ?", en: "— role?" },
+  { value: "s1", fr: "Subject 1", en: "Subject 1" },
+  { value: "s2", fr: "Subject 2", en: "Subject 2" },
+  { value: "s3", fr: "Subject 3", en: "Subject 3" },
+  { value: "s4", fr: "Subject 4", en: "Subject 4" },
+  { value: "room", fr: "Lieu / décor", en: "Place / room" },
+  { value: "object", fr: "Objet / tenue", en: "Object / outfit" },
+  { value: "other", fr: "Autre", en: "Other" },
+];
+const IMAGE_KINDS = {
+  subject: [
+    ["face", "visage (identité)", "face reference (identity)"],
+    ["body", "corps plein pied", "full-body reference (body shape and proportions)"],
+    ["outfit", "tenue", "outfit reference (clothes to wear)"],
+    ["profile", "profil", "side profile reference"],
+    ["back", "de dos", "back view reference"],
+    ["hair", "coiffure", "hairstyle reference"],
+    ["hands", "mains", "hands reference"],
+    ["expression", "expression", "facial expression reference"],
+  ],
+  room: [
+    ["living", "salon", "living room"],
+    ["bedroom", "chambre", "bedroom"],
+    ["bathroom", "salle de bain", "bathroom"],
+    ["kitchen", "cuisine", "kitchen"],
+    ["office", "bureau", "office"],
+    ["veranda", "véranda", "veranda"],
+    ["garden", "jardin", "garden"],
+    ["beach", "plage", "beach"],
+    ["street", "rue", "street"],
+  ],
+  object: [
+    ["prop", "objet tenu", "object to hold or use"],
+    ["clothes", "vêtement", "clothing item to wear"],
+    ["vehicle", "véhicule", "vehicle"],
+  ],
+};
+
+function metaFor(url) {
+  let meta = state.imageMeta.get(url);
+  if (!meta) {
+    meta = { role: "", kind: "", note: "" };
+    state.imageMeta.set(url, meta);
+  }
+  return meta;
+}
+
+function kindGroup(role) {
+  if (/^s\d$/.test(role)) return "subject";
+  if (role === "room" || role === "object") return role;
+  return null;
+}
+
+function imageMetaEditor(url) {
+  const meta = metaFor(url);
+  const fr = language() !== "en";
+  const box = el("div", "bionic-meta");
+  const role = el("select");
+  for (const r of IMAGE_ROLES) {
+    const o = el("option", null, fr ? r.fr : r.en);
+    o.value = r.value;
+    role.appendChild(o);
+  }
+  role.value = meta.role;
+  const kind = el("select");
+  const note = el("input");
+  note.type = "text";
+  note.placeholder = fr ? "précision (libre)" : "details (free text)";
+  note.value = meta.note;
+  const fillKinds = () => {
+    const group = kindGroup(role.value);
+    kind.innerHTML = "";
+    kind.classList.toggle("bionic-hidden", !group);
+    if (!group) return;
+    const blank = el("option", null, "—");
+    blank.value = "";
+    kind.appendChild(blank);
+    for (const [value, labelFr, labelEn] of IMAGE_KINDS[group]) {
+      const o = el("option", null, fr ? labelFr : labelEn);
+      o.value = value;
+      kind.appendChild(o);
+    }
+    kind.value = IMAGE_KINDS[group].some(([v]) => v === meta.kind) ? meta.kind : "";
+  };
+  fillKinds();
+  role.addEventListener("change", () => {
+    meta.role = role.value;
+    meta.kind = "";
+    fillKinds();
+  });
+  kind.addEventListener("change", () => (meta.kind = kind.value));
+  note.addEventListener("input", () => (meta.note = note.value));
+  box.append(role, kind, note);
+  return box;
+}
+
+function imageContextBlock(images) {
+  const lines = [];
+  images.forEach((url, index) => {
+    const meta = state.imageMeta.get(url);
+    if (!meta || (!meta.role && !meta.note.trim())) return;
+    const group = kindGroup(meta.role);
+    const kind = group ? (IMAGE_KINDS[group].find(([v]) => v === meta.kind) || [])[2] : "";
+    let who = "";
+    if (group === "subject") who = `<Subject ${meta.role.slice(1)}>`;
+    else if (meta.role === "room") who = "the place (empty location photo)";
+    else if (meta.role === "object") who = "an object";
+    else if (meta.role === "other") who = "other";
+    const parts = [who, kind, meta.note.trim()].filter(Boolean);
+    lines.push(`- Image ${index + 1}: ${parts.join(" - ")}`);
+  });
+  if (!lines.length) return "";
+  return `ATTACHED IMAGES (what each image is, in attachment order):\n${lines.join("\n")}`;
 }
 
 // ---- Camera move selector ---------------------------------------------------

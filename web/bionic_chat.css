@@ -296,6 +296,34 @@
   display: none;
 }
 
+.bionic-thumb-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  width: 112px;
+}
+
+.bionic-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+}
+
+.bionic-meta select,
+.bionic-meta input {
+  width: 100%;
+  min-width: 0;
+  padding: 2px 4px;
+  border: 1px solid var(--bionic-border);
+  border-radius: 5px;
+  background: var(--bionic-input);
+  color: var(--bionic-fg);
+  font-size: 10px;
+  outline: none;
+}
+
 .bionic-thumb {
   position: relative;
   width: 52px;
