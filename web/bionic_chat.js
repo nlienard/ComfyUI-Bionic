@@ -48,6 +48,7 @@ const I18N = {
     silenceMeterTitle: "Niveau du micro (la barre doit passer au-dessus du trait quand tu parles)",
     silenceDetected: "Silence détecté — envoi de l'enregistrement",
     autoUnload: "Décharger automatiquement le modèle après chaque réponse",
+    cameraSelector: "Afficher le sélecteur de mouvement caméra 🎥",
     web: "Accès Internet (recherche web + ouverture d'URL)",
     whisperModel: "Modèle de transcription audio",
     transcribeLanguage: "Langue de la transcription",
@@ -228,6 +229,7 @@ const I18N = {
     silenceMeterTitle: "Microphone level (the bar should rise above the marker while you speak)",
     silenceDetected: "Silence detected — sending the recording",
     autoUnload: "Unload the model automatically after each answer",
+    cameraSelector: "Show the camera move selector 🎥",
     web: "Internet access (web search + URL opening)",
     whisperModel: "Audio transcription model",
     transcribeLanguage: "Transcription language",
@@ -385,6 +387,7 @@ const state = {
   attachments: [],
   graphPicks: new Map(),
   cameraMoves: [],
+  uiPrefs: { camera_selector: true },
   documents: [],
   busy: false,
   abort: null,
@@ -476,7 +479,7 @@ function buildPanel() {
       <select id="bionic-profile" data-i18n-title="profileTitle"></select>
       <button type="button" class="bionic-icon-btn" id="bionic-unload" data-i18n-title="unloadTitle">⏏</button>
     </div>
-    <div class="bionic-model-row bionic-camera-row">
+    <div class="bionic-model-row bionic-camera-row" id="bionic-camera-row">
       <select id="bionic-camera" data-i18n-title="cameraTitle"></select>
       <input type="text" id="bionic-camera-text" data-i18n-placeholder="cameraTextPlaceholder">
       <button type="button" class="bionic-icon-btn" id="bionic-camera-save" data-i18n-title="cameraSaveTitle">💾</button>
@@ -569,6 +572,10 @@ function buildPanel() {
       <label class="bionic-check">
         <input id="bionic-cfg-autounload" type="checkbox">
         <span data-i18n="autoUnload">Décharger automatiquement le modèle après chaque réponse</span>
+      </label>
+      <label class="bionic-check">
+        <input id="bionic-cfg-camera" type="checkbox">
+        <span data-i18n="cameraSelector">Afficher le sélecteur de mouvement caméra 🎥</span>
       </label>
       <label>
         <span data-i18n="whisperModel">Modèle de transcription audio</span>
@@ -934,6 +941,7 @@ function fillSettings() {
   document.getElementById("bionic-cfg-silence").value = silenceThresholdDb();
   syncSilenceThresholdLabel();
   document.getElementById("bionic-cfg-autounload").checked = state.config.auto_unload === true;
+  document.getElementById("bionic-cfg-camera").checked = state.uiPrefs.camera_selector !== false;
   document.getElementById("bionic-cfg-web").checked = state.config.web_enabled !== false;
   document.getElementById("bionic-cfg-ui-lang").value = state.config.language === "en" ? "en" : "fr";
   document.getElementById("bionic-cfg-whisper").value = state.config.transcribe_model;
@@ -1098,6 +1106,12 @@ async function saveSettings() {
     transcribe_model: document.getElementById("bionic-cfg-whisper").value,
     transcribe_language: document.getElementById("bionic-cfg-language").value,
   };
+  const cameraOn = document.getElementById("bionic-cfg-camera").checked;
+  if (cameraOn !== (state.uiPrefs.camera_selector !== false)) {
+    state.uiPrefs.camera_selector = cameraOn;
+    applyCameraSelectorVisibility();
+    await writeUserJson(UI_PREFS_FILE, state.uiPrefs, false);
+  }
   if (await saveConfig(patch)) {
     state.els.settings.classList.add("bionic-hidden");
     await loadConfig();
@@ -2001,14 +2015,48 @@ const DEFAULT_CAMERA_MOVES = [
   { label: "Dolly zoom (effet vertigo)", prompt: "a dolly zoom: the camera pulls back while zooming in, the background stretches behind the subject" },
 ];
 
-async function loadCameraMoves() {
-  let moves = null;
+const UI_PREFS_FILE = "bionic_ui.json";
+
+async function readUserJson(file) {
   try {
-    const response = await api.fetchApi(`/userdata/${encodeURIComponent(CAMERA_FILE)}`, { cache: "no-store" });
-    if (response.ok) moves = await response.json();
+    const response = await api.fetchApi(`/userdata/${encodeURIComponent(file)}`, { cache: "no-store" });
+    if (response.ok) return await response.json();
   } catch {
-    /* fall back to defaults */
+    /* missing or unreadable */
   }
+  return null;
+}
+
+async function writeUserJson(file, data, silent) {
+  try {
+    const response = await api.fetchApi(`/userdata/${encodeURIComponent(file)}?overwrite=true`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data, null, 2),
+    });
+    if (!response.ok) throw new Error(response.statusText || response.status);
+    return true;
+  } catch (error) {
+    if (!silent) toast("error", t("cameraSaveFailed", error.message || error));
+    return false;
+  }
+}
+
+function applyCameraSelectorVisibility() {
+  const on = state.uiPrefs.camera_selector !== false;
+  document.getElementById("bionic-camera-row")?.classList.toggle("bionic-hidden", !on);
+  if (!on && state.els?.cameraText) {
+    state.els.camera.value = "";
+    state.els.cameraText.value = "";
+  }
+}
+
+async function loadCameraMoves() {
+  const prefs = await readUserJson(UI_PREFS_FILE);
+  if (prefs && typeof prefs === "object") state.uiPrefs = { ...state.uiPrefs, ...prefs };
+  applyCameraSelectorVisibility();
+  let moves = null;
+  moves = await readUserJson(CAMERA_FILE);
   if (!Array.isArray(moves) || !moves.length) {
     moves = DEFAULT_CAMERA_MOVES.slice();
     await writeCameraMoves(moves, true);
@@ -2017,19 +2065,8 @@ async function loadCameraMoves() {
   renderCameraMoves();
 }
 
-async function writeCameraMoves(moves, silent) {
-  try {
-    const response = await api.fetchApi(`/userdata/${encodeURIComponent(CAMERA_FILE)}?overwrite=true`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(moves, null, 2),
-    });
-    if (!response.ok) throw new Error(response.statusText || response.status);
-    return true;
-  } catch (error) {
-    if (!silent) toast("error", t("cameraSaveFailed", error.message || error));
-    return false;
-  }
+function writeCameraMoves(moves, silent) {
+  return writeUserJson(CAMERA_FILE, moves, silent);
 }
 
 function renderCameraMoves() {
