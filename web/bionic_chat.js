@@ -173,6 +173,24 @@ const I18N = {
     graphImagesNone: "Aucune image dans le workflow (Load Image vide ou pas encore exécuté).",
     graphImagesRefresh: "Rafraîchir",
     graphImagesOff: "off",
+    cameraNone: "🎥 Camera move: none (optional)",
+    cameraTitle: "Camera move added to the next LLM request",
+    cameraTextPlaceholder: "camera instruction (English, editable)",
+    cameraSaveTitle: "Save this instruction to the list",
+    cameraDeleteTitle: "Remove this move from the list",
+    cameraSaveName: "Name (description) of the move:",
+    cameraSaved: "Camera move saved: {0}",
+    cameraSaveFailed: "Could not save the camera list: {0}",
+    cameraOnlyRequest: "Add this camera move to the previous prompt.",
+    cameraNone: "🎥 Mouvement caméra : aucun (optionnel)",
+    cameraTitle: "Mouvement caméra ajouté à la prochaine demande au LLM",
+    cameraTextPlaceholder: "instruction caméra (anglais, modifiable)",
+    cameraSaveTitle: "Enregistrer cette instruction dans la liste",
+    cameraDeleteTitle: "Retirer ce mouvement de la liste",
+    cameraSaveName: "Nom (description française) du mouvement :",
+    cameraSaved: "Mouvement caméra enregistré : {0}",
+    cameraSaveFailed: "Enregistrement de la liste caméra impossible : {0}",
+    cameraOnlyRequest: "Ajoute ce mouvement de caméra au prompt précédent.",
   },
   en: {
     launcherTitle: "Open the Bionic chat",
@@ -366,6 +384,7 @@ const state = {
   messages: [],
   attachments: [],
   graphPicks: new Map(),
+  cameraMoves: [],
   documents: [],
   busy: false,
   abort: null,
@@ -456,6 +475,12 @@ function buildPanel() {
       <select id="bionic-model" data-i18n-title="modelTitle"></select>
       <select id="bionic-profile" data-i18n-title="profileTitle"></select>
       <button type="button" class="bionic-icon-btn" id="bionic-unload" data-i18n-title="unloadTitle">⏏</button>
+    </div>
+    <div class="bionic-model-row bionic-camera-row">
+      <select id="bionic-camera" data-i18n-title="cameraTitle"></select>
+      <input type="text" id="bionic-camera-text" data-i18n-placeholder="cameraTextPlaceholder">
+      <button type="button" class="bionic-icon-btn" id="bionic-camera-save" data-i18n-title="cameraSaveTitle">💾</button>
+      <button type="button" class="bionic-icon-btn" id="bionic-camera-del" data-i18n-title="cameraDeleteTitle">🗑</button>
     </div>
     <div id="bionic-messages"></div>
     <div id="bionic-graph-images" class="bionic-hidden"></div>
@@ -577,6 +602,8 @@ function collectElements() {
     attachments: byId("bionic-attachments"),
     graphImages: byId("bionic-graph-images"),
     graphBtn: byId("bionic-graph-btn"),
+    camera: byId("bionic-camera"),
+    cameraText: byId("bionic-camera-text"),
     status: byId("bionic-status"),
     input: byId("bionic-input"),
     model: byId("bionic-model"),
@@ -612,6 +639,7 @@ function applyLanguage() {
 
   const panel = document.getElementById("bionic-panel");
   if (panel) panel.dataset.dropLabel = dict.dropImage;
+  if (state.els?.camera) renderCameraMoves();
 
   renderServerPresets();
   renderWhisperOptions();
@@ -621,6 +649,8 @@ function applyLanguage() {
 
   const promptName = document.getElementById("bionic-cfg-prompt-name");
   if (promptName) promptName.placeholder = dict.promptNamePlaceholder;
+  const cameraText = document.getElementById("bionic-camera-text");
+  if (cameraText) cameraText.placeholder = dict.cameraTextPlaceholder;
   renderPromptOptions();
 
   if (state.els) {
@@ -739,6 +769,13 @@ function bindEvents() {
   document.getElementById("bionic-new").addEventListener("click", newConversation);
   document.getElementById("bionic-attach").addEventListener("click", () => els.file.click());
   els.graphBtn.addEventListener("click", toggleGraphImages);
+  els.camera.addEventListener("change", () => {
+    const move = state.cameraMoves[Number(els.camera.value)];
+    els.cameraText.value = move ? move.prompt : "";
+  });
+  document.getElementById("bionic-camera-save").addEventListener("click", saveCameraMove);
+  document.getElementById("bionic-camera-del").addEventListener("click", deleteCameraMove);
+  loadCameraMoves();
   els.file.addEventListener("change", () => {
     addImageFiles(els.file.files);
     els.file.value = "";
@@ -1595,8 +1632,14 @@ async function maybeAutoRepeat() {
 
 async function sendMessage() {
   if (state.busy) return;
-  const text = state.els.input.value.trim();
-  if (!text && !state.attachments.length && !state.documents.length) return;
+  let text = state.els.input.value.trim();
+  const camera = state.els.cameraText.value.trim();
+  if (!text && !camera && !state.attachments.length && !state.documents.length) return;
+  if (camera) {
+    text = `${text || t("cameraOnlyRequest")}\n\nCAMERA MOVE REQUEST: ${camera}`;
+    state.els.camera.value = "";
+    state.els.cameraText.value = "";
+  }
 
   state.messages.push({
     role: "user",
@@ -1931,6 +1974,104 @@ async function runPrompt(rawText) {
     toast("success", t("launched", node.id));
   } catch (error) {
     toast("error", t("launchFailed", error?.message || error));
+  }
+}
+
+// ---- Camera move selector ---------------------------------------------------
+const CAMERA_FILE = "bionic_camera_moves.json";
+const DEFAULT_CAMERA_MOVES = [
+  { label: "Plan fixe (caméra immobile)", prompt: "a locked-off static shot, the camera does not move" },
+  { label: "Travelling avant lent vers le visage", prompt: "a slow push-in from a medium shot to a close-up on the face" },
+  { label: "Travelling arrière lent (révèle le décor)", prompt: "a slow pull-back from a close-up to a medium-wide shot revealing the room around the subject" },
+  { label: "Zoom avant rapide (effet choc)", prompt: "a fast zoom in onto the face" },
+  { label: "Zoom arrière lent", prompt: "a slow zoom out from the face to a medium shot" },
+  { label: "Demi-orbite autour du sujet (gauche → droite)", prompt: "a slow half orbit around the subject from left to right, the face stays in frame" },
+  { label: "Orbite complète 360°", prompt: "a smooth full 360-degree orbit around the subject at medium speed" },
+  { label: "Panoramique gauche → droite", prompt: "a slow pan from left to right" },
+  { label: "Panoramique droite → gauche", prompt: "a slow pan from right to left" },
+  { label: "Tilt bas → haut (pieds → visage)", prompt: "a slow tilt up from the feet to the face" },
+  { label: "Tilt haut → bas (visage → mains)", prompt: "a slow tilt down from the face to the hands" },
+  { label: "Grue montante (finit en plongée)", prompt: "a slow crane up from eye level, ending in a high-angle shot looking down at the subject" },
+  { label: "Grue descendante (plongée → hauteur des yeux)", prompt: "a slow crane down from a high angle to eye level" },
+  { label: "Travelling d'accompagnement (suit le sujet)", prompt: "a tracking shot that follows the subject side-on at walking speed" },
+  { label: "Caméra à l'épaule (léger tremblé)", prompt: "handheld, slight natural shake, staying close to the action" },
+  { label: "Contre-plongée (vue d'en bas) + avance", prompt: "a low-angle shot looking up at the subject with a slow push-in" },
+  { label: "Plongée zénithale qui tourne", prompt: "a top-down shot directly above the subject, slowly rotating clockwise" },
+  { label: "Vue subjective (POV)", prompt: "the camera holds a static POV shot from the person's eye level" },
+  { label: "Dolly zoom (effet vertigo)", prompt: "a dolly zoom: the camera pulls back while zooming in, the background stretches behind the subject" },
+];
+
+async function loadCameraMoves() {
+  let moves = null;
+  try {
+    const response = await api.fetchApi(`/userdata/${encodeURIComponent(CAMERA_FILE)}`, { cache: "no-store" });
+    if (response.ok) moves = await response.json();
+  } catch {
+    /* fall back to defaults */
+  }
+  if (!Array.isArray(moves) || !moves.length) {
+    moves = DEFAULT_CAMERA_MOVES.slice();
+    await writeCameraMoves(moves, true);
+  }
+  state.cameraMoves = moves.filter((m) => m && m.label && m.prompt);
+  renderCameraMoves();
+}
+
+async function writeCameraMoves(moves, silent) {
+  try {
+    const response = await api.fetchApi(`/userdata/${encodeURIComponent(CAMERA_FILE)}?overwrite=true`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(moves, null, 2),
+    });
+    if (!response.ok) throw new Error(response.statusText || response.status);
+    return true;
+  } catch (error) {
+    if (!silent) toast("error", t("cameraSaveFailed", error.message || error));
+    return false;
+  }
+}
+
+function renderCameraMoves() {
+  const select = state.els.camera;
+  const current = select.value;
+  select.innerHTML = "";
+  const none = el("option", null, t("cameraNone"));
+  none.value = "";
+  select.appendChild(none);
+  state.cameraMoves.forEach((move, index) => {
+    const option = el("option", null, move.label);
+    option.value = String(index);
+    option.title = move.prompt;
+    select.appendChild(option);
+  });
+  if (current && state.cameraMoves[Number(current)]) select.value = current;
+}
+
+async function saveCameraMove() {
+  const prompt = state.els.cameraText.value.trim();
+  if (!prompt) return;
+  const selected = state.cameraMoves[Number(state.els.camera.value)];
+  const label = window.prompt(t("cameraSaveName"), selected && selected.prompt !== prompt ? `${selected.label} (perso)` : selected?.label || "");
+  if (!label || !label.trim()) return;
+  const existing = state.cameraMoves.findIndex((m) => m.label === label.trim());
+  if (existing >= 0) state.cameraMoves[existing].prompt = prompt;
+  else state.cameraMoves.push({ label: label.trim(), prompt });
+  if (await writeCameraMoves(state.cameraMoves)) {
+    renderCameraMoves();
+    state.els.camera.value = String(existing >= 0 ? existing : state.cameraMoves.length - 1);
+    toast("success", t("cameraSaved", label.trim()));
+  }
+}
+
+async function deleteCameraMove() {
+  const index = Number(state.els.camera.value);
+  if (state.els.camera.value === "" || !state.cameraMoves[index]) return;
+  state.cameraMoves.splice(index, 1);
+  if (await writeCameraMoves(state.cameraMoves)) {
+    state.els.camera.value = "";
+    state.els.cameraText.value = "";
+    renderCameraMoves();
   }
 }
 
