@@ -168,6 +168,11 @@ const I18N = {
     readFailed: "lecture impossible",
     unsupportedFormat: "format non supporté",
     dropImage: "Dépose une image",
+    graphImagesTitle: "Images du workflow (Load Image, Preview, Save…) : cocher pour joindre",
+    graphImagesHeader: "Images du workflow — coche pour joindre",
+    graphImagesNone: "Aucune image dans le workflow (Load Image vide ou pas encore exécuté).",
+    graphImagesRefresh: "Rafraîchir",
+    graphImagesOff: "off",
   },
   en: {
     launcherTitle: "Open the Bionic chat",
@@ -324,6 +329,11 @@ const I18N = {
     readFailed: "read failed",
     unsupportedFormat: "unsupported format",
     dropImage: "Drop an image",
+    graphImagesTitle: "Workflow images (Load Image, Preview, Save…): tick to attach",
+    graphImagesHeader: "Workflow images — tick to attach",
+    graphImagesNone: "No image in the workflow (empty Load Image or not run yet).",
+    graphImagesRefresh: "Refresh",
+    graphImagesOff: "off",
   },
 };
 
@@ -355,6 +365,7 @@ const state = {
   models: [],
   messages: [],
   attachments: [],
+  graphPicks: new Map(),
   documents: [],
   busy: false,
   abort: null,
@@ -447,6 +458,7 @@ function buildPanel() {
       <button type="button" class="bionic-icon-btn" id="bionic-unload" data-i18n-title="unloadTitle">⏏</button>
     </div>
     <div id="bionic-messages"></div>
+    <div id="bionic-graph-images" class="bionic-hidden"></div>
     <div id="bionic-attachments"></div>
     <div class="bionic-status" id="bionic-status"></div>
     <div class="bionic-composer">
@@ -454,6 +466,7 @@ function buildPanel() {
       <div class="bionic-tools">
         <button type="button" class="bionic-icon-btn" id="bionic-mic" data-i18n-title="micTitle">🎙</button>
         <button type="button" class="bionic-icon-btn" id="bionic-attach" data-i18n-title="attachTitle">🖼</button>
+        <button type="button" class="bionic-icon-btn" id="bionic-graph-btn" data-i18n-title="graphImagesTitle" aria-pressed="false">📥</button>
         <button type="button" class="bionic-icon-btn" id="bionic-doc" data-i18n-title="docTitle">＋</button>
         <button type="button" class="bionic-icon-btn" id="bionic-web" data-i18n-title="webOffTitle" aria-pressed="false">🌐</button>
         <input type="file" id="bionic-file" accept="image/*" multiple hidden>
@@ -562,6 +575,8 @@ function collectElements() {
     panel: byId("bionic-panel"),
     messages: byId("bionic-messages"),
     attachments: byId("bionic-attachments"),
+    graphImages: byId("bionic-graph-images"),
+    graphBtn: byId("bionic-graph-btn"),
     status: byId("bionic-status"),
     input: byId("bionic-input"),
     model: byId("bionic-model"),
@@ -723,6 +738,7 @@ function bindEvents() {
   document.getElementById("bionic-cfg-url").addEventListener("input", syncPresetSelect);
   document.getElementById("bionic-new").addEventListener("click", newConversation);
   document.getElementById("bionic-attach").addEventListener("click", () => els.file.click());
+  els.graphBtn.addEventListener("click", toggleGraphImages);
   els.file.addEventListener("change", () => {
     addImageFiles(els.file.files);
     els.file.value = "";
@@ -1287,6 +1303,14 @@ function renderMessages() {
 }
 
 function renderAttachments() {
+  for (const [key, url] of state.graphPicks) {
+    if (!state.attachments.includes(url)) state.graphPicks.delete(key);
+  }
+  if (state.els.graphImages && !state.els.graphImages.classList.contains("bionic-hidden")) {
+    state.els.graphImages.querySelectorAll("input[data-key]").forEach((box) => {
+      box.checked = state.graphPicks.has(box.dataset.key);
+    });
+  }
   const box = state.els.attachments;
   box.innerHTML = "";
   state.attachments.forEach((image, index) => {
@@ -1908,6 +1932,139 @@ async function runPrompt(rawText) {
   } catch (error) {
     toast("error", t("launchFailed", error?.message || error));
   }
+}
+
+// ---- Workflow images picker -------------------------------------------------
+const IMAGE_FILE_RE = /\.(png|jpe?g|webp|bmp|gif|tiff?)$/i;
+
+function graphNodesDeep() {
+  const out = [];
+  const seen = new Set();
+  const walk = (graph, prefix) => {
+    if (!graph || seen.has(graph)) return;
+    seen.add(graph);
+    for (const node of graph._nodes || graph.nodes || []) {
+      out.push({ node, prefix });
+      const sub = node.subgraph;
+      if (sub) walk(sub, `${prefix}${node.title || node.type} › `);
+    }
+  };
+  walk(app.graph, "");
+  return out;
+}
+
+function viewUrlFromWidget(value) {
+  let name = String(value || "").trim();
+  let type = "input";
+  const m = name.match(/^(.*?)\s*\[(input|output|temp)\]$/);
+  if (m) {
+    name = m[1];
+    type = m[2];
+  }
+  if (!IMAGE_FILE_RE.test(name)) return null;
+  const slash = name.lastIndexOf("/");
+  const subfolder = slash >= 0 ? name.slice(0, slash) : "";
+  const filename = slash >= 0 ? name.slice(slash + 1) : name;
+  const params = new URLSearchParams({ filename, type, subfolder });
+  return { url: api.apiURL(`/view?${params.toString()}`), name: filename };
+}
+
+function collectGraphImages() {
+  const items = [];
+  const urls = new Set();
+  for (const { node, prefix } of graphNodesDeep()) {
+    const title = `${prefix}${node.title || node.type} #${node.id}`;
+    const off = node.mode === 2 || node.mode === 4;
+    const push = (url, name) => {
+      if (!url || urls.has(url)) return;
+      urls.add(url);
+      items.push({ key: `${node.id}|${url}`, url, name, title, off });
+    };
+    const shown = (node.imgs || []).map((img) => img?.src).filter(Boolean);
+    if (shown.length) {
+      shown.forEach((src, i) => push(src, shown.length > 1 ? `${i + 1}/${shown.length}` : ""));
+      continue;
+    }
+    for (const widget of node.widgets || []) {
+      if (widget.type !== "combo" && widget.name !== "image") continue;
+      const view = viewUrlFromWidget(widget.value);
+      if (view) push(view.url, view.name);
+    }
+  }
+  return items;
+}
+
+function toggleGraphImages() {
+  const box = state.els.graphImages;
+  const open = box.classList.contains("bionic-hidden");
+  box.classList.toggle("bionic-hidden", !open);
+  state.els.graphBtn.setAttribute("aria-pressed", open ? "true" : "false");
+  if (open) renderGraphImages();
+}
+
+function renderGraphImages() {
+  const box = state.els.graphImages;
+  box.innerHTML = "";
+  const head = el("div", "bionic-graph-head");
+  head.appendChild(el("span", null, t("graphImagesHeader")));
+  const refresh = el("button", "bionic-icon-btn", "⟳");
+  refresh.type = "button";
+  refresh.title = t("graphImagesRefresh");
+  refresh.addEventListener("click", renderGraphImages);
+  head.appendChild(refresh);
+  box.appendChild(head);
+
+  const items = collectGraphImages();
+  if (!items.length) {
+    box.appendChild(el("div", "bionic-graph-empty", t("graphImagesNone")));
+    return;
+  }
+  const grid = el("div", "bionic-graph-grid");
+  for (const item of items) {
+    const card = el("label", "bionic-graph-card" + (item.off ? " bionic-graph-off" : ""));
+    card.title = `${item.title}${item.name ? "\n" + item.name : ""}`;
+    const img = el("img");
+    img.src = item.url;
+    img.alt = item.name || item.title;
+    img.loading = "lazy";
+    const check = el("input");
+    check.type = "checkbox";
+    check.dataset.key = item.key;
+    check.checked = state.graphPicks.has(item.key);
+    check.addEventListener("change", () => pickGraphImage(item, check));
+    const caption = el("span", "bionic-graph-caption", (item.off ? `[${t("graphImagesOff")}] ` : "") + item.title);
+    card.append(check, img, caption);
+    grid.appendChild(card);
+  }
+  box.appendChild(grid);
+}
+
+async function pickGraphImage(item, check) {
+  if (!check.checked) {
+    const url = state.graphPicks.get(item.key);
+    state.graphPicks.delete(item.key);
+    const index = state.attachments.indexOf(url);
+    if (index >= 0) state.attachments.splice(index, 1);
+    renderAttachments();
+    return;
+  }
+  if (state.attachments.length >= MAX_IMAGES) {
+    check.checked = false;
+    toast("warning", t("maxImages", MAX_IMAGES));
+    return;
+  }
+  try {
+    const response = await fetch(item.url, { cache: "no-store" });
+    if (!response.ok) throw new Error(response.statusText || response.status);
+    const dataUrl = await fileToDataUrl(await response.blob());
+    if (!check.checked) return;
+    state.attachments.push(dataUrl);
+    state.graphPicks.set(item.key, dataUrl);
+  } catch (error) {
+    check.checked = false;
+    toast("error", t("imageUnreadable", error.message || error));
+  }
+  renderAttachments();
 }
 
 async function addImageFiles(fileList) {
