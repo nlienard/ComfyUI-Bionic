@@ -24,6 +24,7 @@ A Bionic-style chat right inside ComfyUI: it talks to any local OpenAI-compatibl
 ## Features
 
 - Floating chat panel connected to any local OpenAI-compatible server: LM Studio, Ollama, llama.cpp or a custom address.
+- **System prompt** selector next to the model: switch between saved prompts without opening the settings.
 - French or English interface, switchable in ⚙ (panel and node).
 - Streaming answers, collapsible reasoning, model picker in the panel.
 - Vision input: 🖼 button, `Ctrl+V` paste or drag and drop, up to 6 images per message, resized to 1280 px on the long side.
@@ -94,6 +95,7 @@ If no **Bionic Chat Prompt** node exists in the graph, it is created automatical
 |---|---|
 | `💬 Bionic` | opens or closes the panel |
 | `⚙` | settings (server, system prompt, options, transcription) |
+| list next to the model | active system prompt, picked among the prompts saved in ⚙ ("custom system prompt" when the current text is none of them) |
 | `＋` | new conversation: clears the history and resets the token counter |
 | `🖼` | attaches one or more images |
 | `＋` in the toolbar | attaches a document (PDF, DOCX, text) |

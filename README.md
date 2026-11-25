@@ -24,6 +24,7 @@ Un tchat façon Bionic directement dans ComfyUI : il parle à n'importe quel ser
 ## Fonctionnalités
 
 - Panneau de chat flottant branché sur un serveur local compatible OpenAI : LM Studio, Ollama, llama.cpp ou toute autre adresse.
+- Sélecteur de **prompt système** à côté du modèle : passe d'un prompt enregistré à l'autre sans ouvrir les réglages.
 - Interface en français ou en anglais, réglable dans ⚙ (langue du panneau et de la node).
 - Réponses en streaming, raisonnement repliable, choix du modèle dans le panneau.
 - Entrée vision : bouton 🖼, collage `Ctrl+V` ou glisser-déposer, jusqu'à 6 images par message, redimensionnées à 1280 px de côté maximum.
@@ -94,6 +95,7 @@ Si aucune node **Bionic Chat Prompt** n'est présente dans le graphe, elle est c
 |---|---|
 | `💬 Bionic` | ouvre ou referme le panneau |
 | `⚙` | réglages (serveur, prompt système, options, transcription) |
+| liste à côté du modèle | prompt système actif, choisi parmi les prompts enregistrés dans ⚙ (« prompt système personnalisé » si le texte actuel n'en est aucun) |
 | `＋` | nouvelle conversation : vide l'historique et remet le compteur de tokens à zéro |
 | `🖼` | joint une ou plusieurs images |
 | `＋` dans la barre d'outils | joint un document (PDF, DOCX, texte) |

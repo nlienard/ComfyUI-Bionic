@@ -18,6 +18,10 @@ const I18N = {
     newChat: "Nouvelle conversation",
     close: "Fermer",
     modelTitle: "Modèle LM Studio",
+    profileTitle: "Prompt système actif (prompts enregistrés dans ⚙)",
+    profileCustom: "(prompt système personnalisé)",
+    profileNone: "Aucun prompt enregistré",
+    profileActive: "Prompt système : {0}",
     unloadTitle: "Décharger le modèle de la mémoire",
     placeholderIdle: "Écris ton prompt… (Entrée = envoyer, Maj+Entrée = nouvelle ligne)",
     placeholderBusy: "Bionic répond…",
@@ -171,6 +175,10 @@ const I18N = {
     newChat: "New conversation",
     close: "Close",
     modelTitle: "LM Studio model",
+    profileTitle: "Active system prompt (prompts saved in ⚙)",
+    profileCustom: "(custom system prompt)",
+    profileNone: "No saved prompt",
+    profileActive: "System prompt: {0}",
     unloadTitle: "Unload the model from memory",
     placeholderIdle: "Write your prompt… (Enter = send, Shift+Enter = new line)",
     placeholderBusy: "Bionic is answering…",
@@ -435,6 +443,7 @@ function buildPanel() {
     </header>
     <div class="bionic-model-row">
       <select id="bionic-model" data-i18n-title="modelTitle"></select>
+      <select id="bionic-profile" data-i18n-title="profileTitle"></select>
       <button type="button" class="bionic-icon-btn" id="bionic-unload" data-i18n-title="unloadTitle">⏏</button>
     </div>
     <div id="bionic-messages"></div>
@@ -556,6 +565,7 @@ function collectElements() {
     status: byId("bionic-status"),
     input: byId("bionic-input"),
     model: byId("bionic-model"),
+    profile: byId("bionic-profile"),
     unload: byId("bionic-unload"),
     settings: byId("bionic-settings"),
     mic: byId("bionic-mic"),
@@ -737,6 +747,8 @@ function bindEvents() {
 
   els.unload.addEventListener("click", unloadModel);
 
+  els.profile.addEventListener("change", applyProfile);
+
   els.model.addEventListener("change", () => {
     if (!state.config) return;
     state.config.model = els.model.value;
@@ -820,6 +832,7 @@ async function loadConfig() {
     renderModels();
     fillSettings();
     updateWebButton();
+    loadPrompts();
     setStatus(
       data.error
         ? t("lmStudioHint", data.error)
@@ -874,7 +887,52 @@ function fillSettings() {
   document.getElementById("bionic-cfg-language").value = state.config.transcribe_language;
 }
 
+function renderProfileSelect() {
+  const select = state.els?.profile;
+  if (!select) return;
+  const prompts = state.prompts || {};
+  const names = Object.keys(prompts).sort((a, b) => a.localeCompare(b));
+  const current = String(state.config?.system_prompt || "").trim();
+  const active = names.find((name) => String(prompts[name]).trim() === current);
+  select.innerHTML = "";
+  if (!names.length) {
+    const option = el("option", null, t("profileNone"));
+    option.value = "";
+    select.appendChild(option);
+    select.disabled = true;
+    return;
+  }
+  select.disabled = false;
+  for (const name of names) {
+    const option = el("option", null, name);
+    option.value = name;
+    select.appendChild(option);
+  }
+  if (!active) {
+    const option = el("option", null, t("profileCustom"));
+    option.value = "";
+    select.appendChild(option);
+  }
+  select.value = active || "";
+}
+
+async function applyProfile() {
+  const name = state.els.profile.value;
+  const prompts = state.prompts || {};
+  if (!name || prompts[name] === undefined || !state.config) return;
+  const text = prompts[name];
+  if (await saveConfig({ system_prompt: text })) {
+    const textarea = document.getElementById("bionic-cfg-system");
+    if (textarea) textarea.value = text;
+    renderProfileSelect();
+    setStatus(t("profileActive", name));
+  } else {
+    renderProfileSelect();
+  }
+}
+
 function renderPromptOptions() {
+  renderProfileSelect();
   const select = document.getElementById("bionic-cfg-prompt-list");
   if (!select) return;
   const prompts = state.prompts || {};
