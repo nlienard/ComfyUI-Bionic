@@ -1999,6 +1999,7 @@ async function runPrompt(rawText) {
 // ---- Image roles (context sent to the LLM) ---------------------------------
 const IMAGE_ROLES = [
   { value: "", fr: "— rôle ?", en: "— role?" },
+  { value: "start", fr: "Image de départ (1re frame)", en: "Start image (first frame)" },
   { value: "s1", fr: "Subject 1", en: "Subject 1" },
   { value: "s2", fr: "Subject 2", en: "Subject 2" },
   { value: "s3", fr: "Subject 3", en: "Subject 3" },
@@ -2105,11 +2106,16 @@ function imageContextBlock(images) {
     if (group === "subject") who = `<Subject ${meta.role.slice(1)}>`;
     else if (meta.role === "room") who = "the place (empty location photo)";
     else if (meta.role === "object") who = "an object";
+    else if (meta.role === "start") who = "the START IMAGE (first frame of clip 1: SCENE 1 starts exactly on it, \"Start from the first frame: ...\"; it is not a Subject and not a <Picture n>)";
     else if (meta.role === "other") who = "other";
     const parts = [who, kind, meta.note.trim()].filter(Boolean);
     lines.push(`- Image ${index + 1}: ${parts.join(" - ")}`);
   });
   if (!lines.length) return "";
+  const roles = images.map((url) => state.imageMeta.get(url)?.role || "");
+  if (roles.includes("start") && !roles.some((r) => /^s\d$/.test(r))) {
+    lines.push("- No reference photos: the start image is the only image of the people (no subject_definitions, no <Picture n>, no <Subject n>; name people by position + detail).");
+  }
   return `ATTACHED IMAGES (what each image is, in attachment order):\n${lines.join("\n")}`;
 }
 
