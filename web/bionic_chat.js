@@ -2146,7 +2146,7 @@ function imageContextBlock(images) {
     const group = kindGroup(meta.role);
     const kind = group ? (IMAGE_KINDS[group].find(([v]) => v === meta.kind) || [])[2] : "";
     let who = "";
-    if (group === "subject") who = `<Subject ${meta.role.slice(1)}>`;
+    if (group === "subject") who = `<Subject ${meta.role.slice(1)}> = <Picture ${meta.role.slice(1)}> (the workflow numbers photos by Subject, not by attachment order)`;
     else if (meta.role === "room") who = "the place (empty location photo)";
     else if (meta.role === "object") who = "an object";
     else if (meta.role === "start") who = "the START IMAGE (first frame of clip 1: SCENE 1 starts exactly on it, \"Start from the first frame: ...\"; it is not a Subject and not a <Picture n>)";
