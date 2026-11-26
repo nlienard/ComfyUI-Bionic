@@ -986,6 +986,8 @@ async function applyProfile() {
   if (await saveConfig({ system_prompt: text })) {
     const textarea = document.getElementById("bionic-cfg-system");
     if (textarea) textarea.value = text;
+    state.uiPrefs.last_profile = name;
+    await writeUserJson(UI_PREFS_FILE, state.uiPrefs, false);
     renderProfileSelect();
     setStatus(t("profileActive", name));
   } else {
@@ -1026,7 +1028,33 @@ async function loadPrompts() {
   } catch {
     state.prompts = state.prompts || {};
   }
+  await syncLastProfile();
   renderPromptOptions();
+}
+
+// Keep the last chosen profile by NAME: when its saved text changes (edited in ⚙ or in prompts.json),
+// the active system prompt follows it instead of silently keeping the old text.
+async function syncLastProfile() {
+  const prompts = state.prompts || {};
+  if (!state.config) return;
+  const prefs = await readUserJson(UI_PREFS_FILE);
+  if (prefs && typeof prefs === "object") state.uiPrefs = { ...state.uiPrefs, ...prefs };
+  const current = String(state.config.system_prompt || "").trim();
+  let name = state.uiPrefs.last_profile;
+  if (!name || prompts[name] === undefined) {
+    name = Object.keys(prompts).find((n) => String(prompts[n]).trim() === current) || "";
+    if (name && name !== state.uiPrefs.last_profile) {
+      state.uiPrefs.last_profile = name;
+      await writeUserJson(UI_PREFS_FILE, state.uiPrefs, false);
+    }
+    return;
+  }
+  if (String(prompts[name]).trim() !== current) {
+    if (await saveConfig({ system_prompt: prompts[name] })) {
+      const textarea = document.getElementById("bionic-cfg-system");
+      if (textarea) textarea.value = prompts[name];
+    }
+  }
 }
 
 async function savePrompt() {
@@ -1112,6 +1140,16 @@ async function saveSettings() {
     state.uiPrefs.camera_selector = cameraOn;
     applyCameraSelectorVisibility();
     await writeUserJson(UI_PREFS_FILE, state.uiPrefs, false);
+  }
+  {
+    // custom system prompt typed in ⚙ = no saved profile followed any more (else the profile it matches)
+    const typed = String(patch.system_prompt || "").trim();
+    const prompts = state.prompts || {};
+    const match = Object.keys(prompts).find((n) => String(prompts[n]).trim() === typed) || "";
+    if ((state.uiPrefs.last_profile || "") !== match) {
+      state.uiPrefs.last_profile = match;
+      await writeUserJson(UI_PREFS_FILE, state.uiPrefs, false);
+    }
   }
   if (await saveConfig(patch)) {
     state.els.settings.classList.add("bionic-hidden");
