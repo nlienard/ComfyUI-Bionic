@@ -1043,11 +1043,16 @@ async function syncLastProfile() {
   let name = state.uiPrefs.last_profile;
   if (!name || prompts[name] === undefined) {
     name = Object.keys(prompts).find((n) => String(prompts[n]).trim() === current) || "";
-    if (name && name !== state.uiPrefs.last_profile) {
+    if (!name && current) {
+      // the active text is an older version of a saved profile (same beginning): follow that profile
+      const head = current.slice(0, 300);
+      name = Object.keys(prompts).find((n) => String(prompts[n]).trim().startsWith(head)) || "";
+    }
+    if (!name) return;
+    if (name !== state.uiPrefs.last_profile) {
       state.uiPrefs.last_profile = name;
       await writeUserJson(UI_PREFS_FILE, state.uiPrefs, false);
     }
-    return;
   }
   if (String(prompts[name]).trim() !== current) {
     if (await saveConfig({ system_prompt: prompts[name] })) {
